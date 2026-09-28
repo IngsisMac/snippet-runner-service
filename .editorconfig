@@ -1,0 +1,14 @@
+root = true
+
+[*.{kt,kts}]
+indent_size = 4
+max_line_length = 120
+
+# Deshabilitado para permitir imports agrupados; Detekt gestiona su propia regla de WildcardImport
+ktlint_standard_no-wildcard-imports = disabled
+
+# Deshabilitado para dar flexibilidad de estilo y no forzar comas finales en llamadas a metodos de una sola linea/corta
+ktlint_standard_trailing-comma-on-call-site = disabled
+
+# Deshabilitado para delegar la validacion de nombres de paquete a Detekt (PackageNaming) y evitar conflictos de carpetas
+ktlint_standard_package-name = disabled

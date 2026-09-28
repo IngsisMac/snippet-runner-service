@@ -1,0 +1,25 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  ci:
+    uses: IngsisMac/snippet-plugins/.github/workflows/reusable-ci.yml@main
+    secrets: inherit
+
+  cd:
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: IngsisMac/snippet-plugins/.github/workflows/reusable-cd.yml@main
+    with:
+      image-name: snippet-runner-service
+    secrets: inherit
+
