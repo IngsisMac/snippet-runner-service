@@ -8,7 +8,8 @@ spring:
     oauth2:
       resourceserver:
         jwt:
-          issuer-uri: ${AUTH0_ISSUER_URI:https://dev-ingsis.auth0.com/}
+          issuer-uri: ${AUTH0_ISSUER_URI:https://dev-o02i7bmya113pn5u.us.auth0.com/}
+          audiences: ${AUTH0_AUDIENCE:https://snippet-searcher.ingsis/}
 
 springdoc:
   api-docs:

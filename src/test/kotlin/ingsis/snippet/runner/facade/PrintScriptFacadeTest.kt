@@ -97,4 +97,38 @@ class PrintScriptFacadeTest {
         assertEquals(listOf("Actual"), result.actualOutputs)
         assertEquals(listOf("Expected"), result.expectedOutputs)
     }
+
+    @Test
+    fun shouldMarkExecutionIncompleteWhenProgramRequestsMissingInput() {
+        val code =
+            """
+            let name: string = readInput("Enter name: ");
+            println("Hello " + name);
+            """.trimIndent()
+
+        val result = facade.execute(code, "1.1", inputs = emptyList())
+
+        assertFalse(result.completed)
+        assertTrue(result.errors.any { it.contains("more inputs than provided") })
+    }
+
+    @Test
+    fun shouldFailTestCaseWhenInputsAreMissingEvenIfOutputsMatch() {
+        val code =
+            """
+            let name: string = readInput("Enter name: ");
+            println("Hello " + name);
+            """.trimIndent()
+
+        val result =
+            facade.runTest(
+                code,
+                "1.1",
+                inputs = emptyList(),
+                expectedOutputs = listOf("Enter name: ", "Hello ")
+            )
+
+        assertFalse(result.passed)
+        assertEquals(listOf("Enter name: ", "Hello "), result.actualOutputs)
+    }
 }

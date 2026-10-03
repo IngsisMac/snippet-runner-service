@@ -29,13 +29,28 @@ class PrintScriptFacade {
                 env = envSource,
             )
 
-        val errorMessages = result.errors.map { "${it.span.start.line}:${it.span.start.column}: ${it.message}" }
+        val errorMessages =
+            result.errors.map { "${it.span.start.line}:${it.span.start.column}: ${it.message}" } +
+                boundaryViolations(outputEmitter, inputSource)
         return ParseExecutionResult(
             outputs = outputEmitter.getOutputs(),
             errors = errorMessages,
             completed = errorMessages.isEmpty(),
         )
     }
+
+    private fun boundaryViolations(
+        outputEmitter: BoundedOutputEmitter,
+        inputSource: QueuedInputSource,
+    ): List<String> =
+        buildList {
+            if (outputEmitter.limitExceeded) {
+                add("Output truncated: the program printed more than ${BoundedOutputEmitter.DEFAULT_MAX_LINES} lines")
+            }
+            if (inputSource.exhausted) {
+                add("The program requested more inputs than provided (${inputSource.missingInputs().size} missing)")
+            }
+        }
 
     fun validate(
         content: String,
