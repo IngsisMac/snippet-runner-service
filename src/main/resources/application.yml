@@ -1,5 +1,8 @@
 server:
   port: 8082
+  error:
+    # La UI muestra `message` del JSON de error (razon de ResponseStatusException); por defecto Spring lo omite.
+    include-message: always
 
 spring:
   application:
