@@ -18,7 +18,7 @@ class PrintScriptFacade {
         val parsedVersion = parseVersion(version)
         val outputEmitter = BoundedOutputEmitter()
         val inputSource = QueuedInputSource(inputs)
-        val envSource = env?.let { EnvSource { key -> it[key] } } ?: EnvSource.DENY
+        val envSource = env?.let { EnvSource { key -> it[key] } } ?: EnvSource { null }
 
         val result =
             PrintScriptRunner.execute(
