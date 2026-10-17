@@ -2,33 +2,92 @@ package ingsis.snippet.runner.redis
 
 import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
+import ingsis.snippet.redis.event.ComplianceResultEvent
+import ingsis.snippet.redis.event.LintRequestEvent
+import ingsis.snippet.runner.facade.ParseLintFinding
 import ingsis.snippet.runner.facade.PrintScriptFacade
+import org.austral.ingsis.redis.RedisStreamConsumer
 import org.slf4j.LoggerFactory
-import org.springframework.data.redis.connection.stream.MapRecord
-import org.springframework.data.redis.connection.stream.StreamRecords
-import org.springframework.data.redis.core.StringRedisTemplate
+import org.springframework.context.annotation.Profile
+import org.springframework.data.redis.connection.stream.ObjectRecord
+import org.springframework.data.redis.core.RedisTemplate
+import org.springframework.data.redis.stream.StreamReceiver
 import org.springframework.stereotype.Component
+import java.time.Duration
 
 @Component
+@Profile("!test")
 class LintStreamConsumer(
     private val facade: PrintScriptFacade,
-    private val redisTemplate: StringRedisTemplate,
+    private val lintResultProducer: LintResultProducer,
     private val objectMapper: ObjectMapper,
-) {
+    redisTemplate: RedisTemplate<String, String>,
+) : RedisStreamConsumer<LintRequestEvent>(
+        streamKey = "lint-request",
+        groupId = "runner-lint-group",
+        redis = redisTemplate,
+    ) {
     private val logger = LoggerFactory.getLogger(javaClass)
 
-    fun processRecord(record: MapRecord<String, String, String>) {
-        val valueMap = record.value
-        val snippetId = valueMap["snippetId"] ?: return
-        val content = valueMap["content"] ?: ""
-        val version = valueMap["version"] ?: "1.1"
-        val rulesVersion = valueMap["rulesVersion"]?.toIntOrNull() ?: 0
-        val rules = parseRules(valueMap["rules"] ?: "{}")
+    public override fun options(): StreamReceiver.StreamReceiverOptions<
+        String,
+        ObjectRecord<String, LintRequestEvent>,
+    > =
+        StreamReceiver.StreamReceiverOptions
+            .builder()
+            .pollTimeout(Duration.ofMillis(POLL_TIMEOUT_MS))
+            .targetType(LintRequestEvent::class.java)
+            .build()
 
-        val findings = facade.lint(content, version, rules)
-        val status = if (findings.isEmpty()) "COMPLIANT" else "NOT_COMPLIANT"
+    @Suppress("TooGenericExceptionCaught")
+    public override fun onMessage(record: ObjectRecord<String, LintRequestEvent>) {
+        try {
+            val event = record.value
+            val rulesMap = parseRules(event.rules)
+            val findings = lintWithRetry(event, rulesMap)
 
-        emitResult(snippetId, rulesVersion, status, findings.size)
+            val status =
+                when {
+                    findings == null -> "FAILED"
+                    findings.isEmpty() -> "COMPLIANT"
+                    else -> "NOT_COMPLIANT"
+                }
+
+            emitResult(event, status, findings?.size ?: 0)
+        } catch (t: Throwable) {
+            logger.error("Unhandled error processing lint-request record", t)
+        }
+    }
+
+    @Suppress("TooGenericExceptionCaught")
+    private fun lintWithRetry(
+        event: LintRequestEvent,
+        rules: Map<String, Any>,
+    ): List<ParseLintFinding>? {
+        for (attempt in 1..MAX_ATTEMPTS) {
+            try {
+                return facade.lint(event.content, event.version, rules)
+            } catch (ex: Exception) {
+                logger.warn("Lint attempt $attempt failed for snippet {}: {}", event.snippetId, ex.message)
+            }
+        }
+        return null
+    }
+
+    private fun emitResult(
+        event: LintRequestEvent,
+        status: String,
+        findingsCount: Int,
+    ) {
+        lintResultProducer.emit(
+            ComplianceResultEvent(
+                snippetId = event.snippetId,
+                rulesVersion = event.rulesVersion,
+                status = status,
+                findingsCount = findingsCount,
+            ),
+        )
+        logger.info("Processed lint for snippet {} with result {} v{}", event.snippetId, status, event.rulesVersion)
     }
 
     private fun parseRules(rulesJson: String): Map<String, Any> =
@@ -38,32 +97,8 @@ class LintStreamConsumer(
             emptyMap()
         }
 
-    private fun emitResult(
-        snippetId: String,
-        rulesVersion: Int,
-        status: String,
-        findingsCount: Int,
-    ) {
-        val payload =
-            mapOf(
-                "snippetId" to snippetId,
-                "rulesVersion" to rulesVersion.toString(),
-                "status" to status,
-                "findingsCount" to findingsCount.toString(),
-                "timestamp" to System.currentTimeMillis().toString(),
-            )
-        val resultRecord =
-            StreamRecords
-                .newRecord()
-                .ofStrings(payload)
-                .withStreamKey(RESULTS_STREAM)
-
-        redisTemplate.opsForStream<String, String>().add(resultRecord)
-        logger.info("Processed lint for snippet {} with result {} v{}", snippetId, status, rulesVersion)
-    }
-
     companion object {
-        const val LINT_REQUEST_STREAM = "lint-requests-stream"
-        const val RESULTS_STREAM = "compliance-results-stream"
+        private const val POLL_TIMEOUT_MS = 10000L
+        private const val MAX_ATTEMPTS = 3
     }
 }

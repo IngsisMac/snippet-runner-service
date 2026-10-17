@@ -1,23 +1,31 @@
 package ingsis.snippet.runner.redis
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import ingsis.snippet.redis.event.ComplianceResultEvent
+import ingsis.snippet.redis.event.LintRequestEvent
 import ingsis.snippet.runner.facade.ParseLintFinding
 import ingsis.snippet.runner.facade.PrintScriptFacade
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
+import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
-import org.springframework.data.redis.connection.stream.MapRecord
+import org.springframework.data.redis.connection.stream.ObjectRecord
 import org.springframework.data.redis.connection.stream.RecordId
+import org.springframework.data.redis.connection.stream.StreamRecords
+import org.springframework.data.redis.core.RedisTemplate
 import org.springframework.data.redis.core.StreamOperations
-import org.springframework.data.redis.core.StringRedisTemplate
 
 class LintStreamConsumerTest {
     private lateinit var facade: PrintScriptFacade
-    private lateinit var redisTemplate: StringRedisTemplate
-    private lateinit var streamOperations: StreamOperations<String, String, String>
+    private lateinit var redisTemplate: RedisTemplate<String, String>
+    private lateinit var streamOperations: StreamOperations<String, String, Any>
+    private lateinit var lintResultProducer: LintResultProducer
     private lateinit var consumer: LintStreamConsumer
     private val objectMapper = ObjectMapper()
 
@@ -26,54 +34,149 @@ class LintStreamConsumerTest {
         facade = mock()
         redisTemplate = mock()
         streamOperations = mock()
-        whenever(redisTemplate.opsForStream<String, String>()).thenReturn(streamOperations)
+        whenever(redisTemplate.opsForStream<String, Any>()).thenReturn(streamOperations)
         whenever(streamOperations.add(any())).thenReturn(RecordId.of("100-0"))
-        consumer = LintStreamConsumer(facade, redisTemplate, objectMapper)
+        lintResultProducer = LintResultProducer(redisTemplate)
+        consumer = LintStreamConsumer(facade, lintResultProducer, objectMapper, redisTemplate)
     }
 
     @Test
-    fun shouldProcessValidRecordAndEmitCompliantResult() {
-        val payload =
-            mapOf(
-                "snippetId" to "snippet-123",
-                "content" to "let x: number = 5;",
-                "version" to "1.1",
-                "rulesVersion" to "2",
-                "rules" to "{}",
+    fun shouldProcessValidRecordAndEmitCompliantResultWhenNoFindings() {
+        val event =
+            LintRequestEvent(
+                snippetId = "snippet-123",
+                content = "let x: number = 5;",
+                version = "1.1",
+                rulesVersion = 2,
+                rules = "{\"ruleA\": true}",
             )
-        val record = MapRecord.create("lint-requests-stream", payload)
-        whenever(facade.lint(any(), any(), any())).thenReturn(emptyList())
+        val record: ObjectRecord<String, LintRequestEvent> =
+            StreamRecords.newRecord().ofObject(event).withStreamKey("lint-request")
+        whenever(facade.lint(event.content, event.version, mapOf("ruleA" to true))).thenReturn(emptyList())
 
-        consumer.processRecord(record)
+        consumer.onMessage(record)
 
-        verify(facade).lint("let x: number = 5;", "1.1", emptyMap())
-        verify(streamOperations).add(any())
+        verify(facade).lint(event.content, event.version, mapOf("ruleA" to true))
+        val captor = argumentCaptor<ObjectRecord<String, ComplianceResultEvent>>()
+        verify(streamOperations).add(captor.capture())
+        val captured = captor.firstValue.value
+        assertEquals("snippet-123", captured.snippetId)
+        assertEquals(2, captured.rulesVersion)
+        assertEquals("COMPLIANT", captured.status)
+        assertEquals(0, captured.findingsCount)
     }
 
     @Test
-    fun shouldProcessRecordWithFindingsAndEmitNotCompliantResult() {
-        val payload =
-            mapOf(
-                "snippetId" to "snippet-456",
-                "content" to "let MyVar: number = 5;",
-                "version" to "1.1",
-                "rulesVersion" to "3",
-                "rules" to "{}",
+    fun shouldProcessRecordAndEmitNotCompliantResultWhenFindingsExist() {
+        val event =
+            LintRequestEvent(
+                snippetId = "snippet-456",
+                content = "let MyVar: number = 5;",
+                version = "1.1",
+                rulesVersion = 3,
+                rules = "{}",
             )
-        val record = MapRecord.create("lint-requests-stream", payload)
+        val record: ObjectRecord<String, LintRequestEvent> =
+            StreamRecords.newRecord().ofObject(event).withStreamKey("lint-request")
         whenever(facade.lint(any(), any(), any())).thenReturn(listOf(ParseLintFinding("Invalid naming", 1, 5)))
 
-        consumer.processRecord(record)
+        consumer.onMessage(record)
 
-        verify(facade).lint("let MyVar: number = 5;", "1.1", emptyMap())
-        verify(streamOperations).add(any())
+        verify(facade).lint(event.content, event.version, emptyMap())
+        val captor = argumentCaptor<ObjectRecord<String, ComplianceResultEvent>>()
+        verify(streamOperations).add(captor.capture())
+        val captured = captor.firstValue.value
+        assertEquals("snippet-456", captured.snippetId)
+        assertEquals(3, captured.rulesVersion)
+        assertEquals("NOT_COMPLIANT", captured.status)
+        assertEquals(1, captured.findingsCount)
     }
 
     @Test
-    fun shouldIgnoreRecordWithoutSnippetId() {
-        val payload = mapOf("content" to "empty")
-        val record = MapRecord.create("lint-requests-stream", payload)
+    fun shouldRetryUpToThreeTimesAndEmitFailedWhenAllAttemptsFail() {
+        val event =
+            LintRequestEvent(
+                snippetId = "snippet-err",
+                content = "invalid code syntax",
+                version = "1.1",
+                rulesVersion = 1,
+                rules = "{}",
+            )
+        val record: ObjectRecord<String, LintRequestEvent> =
+            StreamRecords.newRecord().ofObject(event).withStreamKey("lint-request")
+        whenever(facade.lint(any(), any(), any())).thenThrow(RuntimeException("Fatal parser error"))
 
-        consumer.processRecord(record)
+        consumer.onMessage(record)
+
+        verify(facade, times(3)).lint(event.content, event.version, emptyMap())
+        val captor = argumentCaptor<ObjectRecord<String, ComplianceResultEvent>>()
+        verify(streamOperations).add(captor.capture())
+        val captured = captor.firstValue.value
+        assertEquals("snippet-err", captured.snippetId)
+        assertEquals(1, captured.rulesVersion)
+        assertEquals("FAILED", captured.status)
+        assertEquals(0, captured.findingsCount)
+    }
+
+    @Test
+    fun shouldSucceedOnRetryWhenIntermittentFailureOccurs() {
+        val event =
+            LintRequestEvent(
+                snippetId = "snippet-intermittent",
+                content = "let a: number = 1;",
+                version = "1.1",
+                rulesVersion = 1,
+                rules = "{}",
+            )
+        val record: ObjectRecord<String, LintRequestEvent> =
+            StreamRecords.newRecord().ofObject(event).withStreamKey("lint-request")
+        whenever(facade.lint(any(), any(), any()))
+            .thenThrow(RuntimeException("Temporary hiccup"))
+            .thenReturn(emptyList())
+
+        consumer.onMessage(record)
+
+        verify(facade, times(2)).lint(event.content, event.version, emptyMap())
+        val captor = argumentCaptor<ObjectRecord<String, ComplianceResultEvent>>()
+        verify(streamOperations).add(captor.capture())
+        val captured = captor.firstValue.value
+        assertEquals("snippet-intermittent", captured.snippetId)
+        assertEquals(1, captured.rulesVersion)
+        assertEquals("COMPLIANT", captured.status)
+        assertEquals(0, captured.findingsCount)
+    }
+
+    @Test
+    fun shouldFallbackToEmptyRulesWhenJsonMalformed() {
+        val event =
+            LintRequestEvent(
+                snippetId = "snippet-malformed-rules",
+                content = "let a: number = 1;",
+                version = "1.1",
+                rulesVersion = 1,
+                rules = "{malformed-json",
+            )
+        val record: ObjectRecord<String, LintRequestEvent> =
+            StreamRecords.newRecord().ofObject(event).withStreamKey("lint-request")
+        whenever(facade.lint(any(), any(), any())).thenReturn(emptyList())
+
+        consumer.onMessage(record)
+
+        verify(facade).lint(event.content, event.version, emptyMap())
+        val captor = argumentCaptor<ObjectRecord<String, ComplianceResultEvent>>()
+        verify(streamOperations).add(captor.capture())
+        val captured = captor.firstValue.value
+        assertEquals("snippet-malformed-rules", captured.snippetId)
+        assertEquals(1, captured.rulesVersion)
+        assertEquals("COMPLIANT", captured.status)
+        assertEquals(0, captured.findingsCount)
+    }
+
+    @Test
+    fun shouldConfigureReceiverOptionsCorrectly() {
+        val options = consumer.options()
+
+        assertNotNull(options)
+        assertEquals(LintRequestEvent::class.java, options.targetType)
     }
 }
