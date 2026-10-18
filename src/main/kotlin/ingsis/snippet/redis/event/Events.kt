@@ -25,6 +25,8 @@ data class ComplianceResultEvent(
     val rulesVersion: Int = 0,
     val status: String = "PENDING",
     val findingsCount: Int = 0,
+    /** Hallazgos del linter serializados como JSON (`[{message,line,column}]`). */
+    val findings: String = "[]",
 )
 
 data class FormatRequestEvent(

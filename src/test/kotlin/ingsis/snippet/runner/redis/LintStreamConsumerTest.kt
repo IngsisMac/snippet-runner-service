@@ -37,7 +37,14 @@ class LintStreamConsumerTest {
         whenever(redisTemplate.opsForStream<String, Any>()).thenReturn(streamOperations)
         whenever(streamOperations.add(any())).thenReturn(RecordId.of("100-0"))
         lintResultProducer = LintResultProducer(redisTemplate)
-        consumer = LintStreamConsumer(facade, lintResultProducer, objectMapper, redisTemplate)
+        consumer =
+            LintStreamConsumer(
+                facade,
+                lintResultProducer,
+                objectMapper,
+                redisTemplate,
+                StreamWorkQueue.direct("lint-request"),
+            )
     }
 
     @Test

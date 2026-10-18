@@ -22,6 +22,7 @@ class LintStreamConsumer(
     private val lintResultProducer: LintResultProducer,
     private val objectMapper: ObjectMapper,
     redisTemplate: RedisTemplate<String, String>,
+    private val work: StreamWorkQueue = StreamWorkQueue("lint-request"),
 ) : RedisStreamConsumer<LintRequestEvent>(
         streamKey = "lint-request",
         groupId = "runner-lint-group",
@@ -39,24 +40,22 @@ class LintStreamConsumer(
             .targetType(LintRequestEvent::class.java)
             .build()
 
-    @Suppress("TooGenericExceptionCaught")
     public override fun onMessage(record: ObjectRecord<String, LintRequestEvent>) {
-        try {
-            val event = record.value
-            val rulesMap = parseRules(event.rules)
-            val findings = lintWithRetry(event, rulesMap)
+        work.submit { process(record.value) }
+    }
 
-            val status =
-                when {
-                    findings == null -> "FAILED"
-                    findings.isEmpty() -> "COMPLIANT"
-                    else -> "NOT_COMPLIANT"
-                }
+    private fun process(event: LintRequestEvent) {
+        val rulesMap = parseRules(event.rules)
+        val findings = lintWithRetry(event, rulesMap)
 
-            emitResult(event, status, findings?.size ?: 0)
-        } catch (t: Throwable) {
-            logger.error("Unhandled error processing lint-request record", t)
-        }
+        val status =
+            when {
+                findings == null -> "FAILED"
+                findings.isEmpty() -> "COMPLIANT"
+                else -> "NOT_COMPLIANT"
+            }
+
+        emitResult(event, status, findings.orEmpty())
     }
 
     @Suppress("TooGenericExceptionCaught")
@@ -77,14 +76,15 @@ class LintStreamConsumer(
     private fun emitResult(
         event: LintRequestEvent,
         status: String,
-        findingsCount: Int,
+        findings: List<ParseLintFinding>,
     ) {
         lintResultProducer.emit(
             ComplianceResultEvent(
                 snippetId = event.snippetId,
                 rulesVersion = event.rulesVersion,
                 status = status,
-                findingsCount = findingsCount,
+                findingsCount = findings.size,
+                findings = objectMapper.writeValueAsString(findings),
             ),
         )
         logger.info("Processed lint for snippet {} with result {} v{}", event.snippetId, status, event.rulesVersion)

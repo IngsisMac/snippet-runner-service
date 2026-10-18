@@ -36,7 +36,14 @@ class FormatStreamConsumerTest {
         whenever(redisTemplate.opsForStream<String, Any>()).thenReturn(streamOperations)
         whenever(streamOperations.add(any())).thenReturn(RecordId.of("100-0"))
         formatResultProducer = FormatResultProducer(redisTemplate)
-        consumer = FormatStreamConsumer(facade, formatResultProducer, objectMapper, redisTemplate)
+        consumer =
+            FormatStreamConsumer(
+                facade,
+                formatResultProducer,
+                objectMapper,
+                redisTemplate,
+                StreamWorkQueue.direct("format-request"),
+            )
     }
 
     @Test

@@ -21,6 +21,7 @@ class FormatStreamConsumer(
     private val formatResultProducer: FormatResultProducer,
     private val objectMapper: ObjectMapper,
     redisTemplate: RedisTemplate<String, String>,
+    private val work: StreamWorkQueue = StreamWorkQueue("format-request"),
 ) : RedisStreamConsumer<FormatRequestEvent>(
         streamKey = "format-request",
         groupId = "runner-format-group",
@@ -38,21 +39,19 @@ class FormatStreamConsumer(
             .targetType(FormatRequestEvent::class.java)
             .build()
 
-    @Suppress("TooGenericExceptionCaught")
     public override fun onMessage(record: ObjectRecord<String, FormatRequestEvent>) {
-        try {
-            val event = record.value
-            val rulesMap = parseRules(event.rules)
-            val formatted = formatWithRetry(event, rulesMap)
+        work.submit { process(record.value) }
+    }
 
-            if (formatted == null) {
-                logger.error("Format failed after $MAX_ATTEMPTS attempts for snippet {}", event.snippetId)
-                emitResult(event, formattedContent = "", status = "FAILED")
-            } else {
-                emitResult(event, formattedContent = formatted, status = "SUCCESS")
-            }
-        } catch (t: Throwable) {
-            logger.error("Unhandled error processing format-request record", t)
+    private fun process(event: FormatRequestEvent) {
+        val rulesMap = parseRules(event.rules)
+        val formatted = formatWithRetry(event, rulesMap)
+
+        if (formatted == null) {
+            logger.error("Format failed after $MAX_ATTEMPTS attempts for snippet {}", event.snippetId)
+            emitResult(event, formattedContent = "", status = "FAILED")
+        } else {
+            emitResult(event, formattedContent = formatted, status = "SUCCESS")
         }
     }
 
