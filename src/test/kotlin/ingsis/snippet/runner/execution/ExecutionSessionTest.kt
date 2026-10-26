@@ -141,6 +141,17 @@ class ExecutionSessionTest {
         return events.toList()
     }
 
+    @Test
+    fun shouldRejectInputWhenExecutionIsAlreadyFinished() {
+        val session = sessionFor("println(1);")
+        session.run()
+        assertTrue(session.isDone)
+
+        org.junit.jupiter.api.assertThrows<ExecutionAlreadyFinishedException> {
+            session.submitInput("late input")
+        }
+    }
+
     private fun outputsOf(events: List<ExecutionEvent>) =
         events.filterIsInstance<ExecutionEvent.Output>().map { it.line }
 

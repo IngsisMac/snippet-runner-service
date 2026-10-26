@@ -91,7 +91,7 @@ class ExecutionSession(
     }
 
     fun submitInput(value: String) {
-        require(!isDone) { "Execution already finished" }
+        if (isDone) throw ExecutionAlreadyFinishedException()
         inputSource.offer(value)
     }
 
