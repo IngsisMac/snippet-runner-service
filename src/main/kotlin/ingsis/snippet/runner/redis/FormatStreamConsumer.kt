@@ -40,7 +40,21 @@ class FormatStreamConsumer(
             .build()
 
     public override fun onMessage(record: ObjectRecord<String, FormatRequestEvent>) {
-        work.submit { process(record.value) }
+        val event = record.value
+        work.submit {
+            val cid =
+                event.correlationId.ifBlank {
+                    java.util.UUID
+                        .randomUUID()
+                        .toString()
+                }
+            org.slf4j.MDC.put(ingsis.snippet.runner.tracing.CorrelationIdFilter.CORRELATION_ID_KEY, cid)
+            try {
+                process(event)
+            } finally {
+                org.slf4j.MDC.remove(ingsis.snippet.runner.tracing.CorrelationIdFilter.CORRELATION_ID_KEY)
+            }
+        }
     }
 
     private fun process(event: FormatRequestEvent) {
@@ -81,6 +95,9 @@ class FormatStreamConsumer(
                 rulesVersion = event.rulesVersion,
                 formattedContent = formattedContent,
                 status = status,
+                correlationId =
+                    org.slf4j.MDC.get(ingsis.snippet.runner.tracing.CorrelationIdFilter.CORRELATION_ID_KEY)
+                        ?: event.correlationId,
             ),
         )
         logger.info("Processed format for snippet {} v{} with status {}", event.snippetId, event.rulesVersion, status)

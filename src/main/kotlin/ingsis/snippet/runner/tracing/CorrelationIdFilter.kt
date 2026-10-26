@@ -16,6 +16,7 @@ class CorrelationIdFilter : OncePerRequestFilter() {
     companion object {
         const val CORRELATION_ID_KEY = "correlation-id"
         const val CORRELATION_ID_HEADER = "X-Correlation-Id"
+        const val REQUEST_ID_HEADER = "X-Request-Id"
     }
 
     override fun doFilterInternal(
@@ -25,10 +26,12 @@ class CorrelationIdFilter : OncePerRequestFilter() {
     ) {
         val correlationId =
             request.getHeader(CORRELATION_ID_HEADER)?.ifBlank { null }
+                ?: request.getHeader(REQUEST_ID_HEADER)?.ifBlank { null }
                 ?: UUID.randomUUID().toString()
 
         MDC.put(CORRELATION_ID_KEY, correlationId)
         response.setHeader(CORRELATION_ID_HEADER, correlationId)
+        response.setHeader(REQUEST_ID_HEADER, correlationId)
 
         try {
             filterChain.doFilter(request, response)

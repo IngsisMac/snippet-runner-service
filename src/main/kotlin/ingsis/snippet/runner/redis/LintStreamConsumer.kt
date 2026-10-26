@@ -41,7 +41,21 @@ class LintStreamConsumer(
             .build()
 
     public override fun onMessage(record: ObjectRecord<String, LintRequestEvent>) {
-        work.submit { process(record.value) }
+        val event = record.value
+        work.submit {
+            val cid =
+                event.correlationId.ifBlank {
+                    java.util.UUID
+                        .randomUUID()
+                        .toString()
+                }
+            org.slf4j.MDC.put(ingsis.snippet.runner.tracing.CorrelationIdFilter.CORRELATION_ID_KEY, cid)
+            try {
+                process(event)
+            } finally {
+                org.slf4j.MDC.remove(ingsis.snippet.runner.tracing.CorrelationIdFilter.CORRELATION_ID_KEY)
+            }
+        }
     }
 
     private fun process(event: LintRequestEvent) {
@@ -85,6 +99,9 @@ class LintStreamConsumer(
                 status = status,
                 findingsCount = findings.size,
                 findings = objectMapper.writeValueAsString(findings),
+                correlationId =
+                    org.slf4j.MDC.get(ingsis.snippet.runner.tracing.CorrelationIdFilter.CORRELATION_ID_KEY)
+                        ?: event.correlationId,
             ),
         )
         logger.info("Processed lint for snippet {} with result {} v{}", event.snippetId, status, event.rulesVersion)

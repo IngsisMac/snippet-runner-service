@@ -4,12 +4,14 @@ data class LintRulesChangeEvent(
     val userId: String = "",
     val rulesVersion: Int = 0,
     val rules: String = "{}",
+    val correlationId: String = "",
 )
 
 data class FormatRulesChangeEvent(
     val userId: String = "",
     val rulesVersion: Int = 0,
     val rules: String = "{}",
+    val correlationId: String = "",
 )
 
 data class LintRequestEvent(
@@ -18,6 +20,7 @@ data class LintRequestEvent(
     val version: String = "1.1",
     val rulesVersion: Int = 0,
     val rules: String = "{}",
+    val correlationId: String = "",
 )
 
 data class ComplianceResultEvent(
@@ -27,6 +30,7 @@ data class ComplianceResultEvent(
     val findingsCount: Int = 0,
     /** Hallazgos del linter serializados como JSON (`[{message,line,column}]`). */
     val findings: String = "[]",
+    val correlationId: String = "",
 )
 
 data class FormatRequestEvent(
@@ -35,6 +39,7 @@ data class FormatRequestEvent(
     val version: String = "1.1",
     val rulesVersion: Int = 0,
     val rules: String = "{}",
+    val correlationId: String = "",
 )
 
 data class FormatResultEvent(
@@ -42,4 +47,5 @@ data class FormatResultEvent(
     val rulesVersion: Int = 0,
     val formattedContent: String = "",
     val status: String = "SUCCESS",
+    val correlationId: String = "",
 )
