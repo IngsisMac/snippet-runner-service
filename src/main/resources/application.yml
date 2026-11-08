@@ -14,6 +14,19 @@ spring:
           issuer-uri: ${AUTH0_ISSUER_URI:https://dev-o02i7bmya113pn5u.us.auth0.com/}
           audiences: ${AUTH0_AUDIENCE:https://snippet-searcher.ingsis/}
 
+# Cotas de una ejecucion interactiva (US #9 y #10). El corte lo decide el runner, no el cliente.
+runner:
+  execution:
+    # Tiempo de computo, sin contar lo que el programa espera en readInput.
+    compute-timeout: ${RUNNER_COMPUTE_TIMEOUT:10s}
+    # Cuanto se espera que una persona escriba antes de cortar la sesion.
+    input-timeout: ${RUNNER_INPUT_TIMEOUT:60s}
+    # Cada cuanto el watchdog revisa si alguna sesion se paso de su presupuesto de computo.
+    watchdog-interval: ${RUNNER_WATCHDOG_INTERVAL:PT0.5S}
+    # Cuanto sobrevive una sesion terminada antes de limpiarse.
+    retention: ${RUNNER_EXECUTION_RETENTION:5m}
+    max-concurrent-sessions: ${RUNNER_MAX_EXECUTIONS:50}
+
 springdoc:
   api-docs:
     path: /v3/api-docs
