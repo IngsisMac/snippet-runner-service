@@ -32,3 +32,9 @@ springdoc:
     path: /v3/api-docs
   swagger-ui:
     path: /swagger-ui.html
+
+# CORS: origins desde las que el navegador puede llamar a la API. Detras del gateway la UI
+# y la API comparten origin, asi que esto solo entra en juego si alguna vez se separan; en
+# desarrollo valen el dev server de Vite (5173) y el gateway (8080). Nunca se usa "*".
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:8080}
