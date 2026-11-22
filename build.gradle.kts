@@ -1,5 +1,5 @@
 plugins {
-    id("ingsis.snippet.spring") version "0.1.1"
+    id("ingsis.snippet.spring")
 }
 
 group = "ingsis.snippet"
